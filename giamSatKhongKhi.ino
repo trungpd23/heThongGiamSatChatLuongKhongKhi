@@ -121,7 +121,7 @@ void loop() {
     digitalWrite(BUZZER_PIN, LOW);
     // Gửi thông báo Blynk
     if (!alertSent) {
-      Blynk.logEvent("high_dust_warning", "⚠️ Nồng độ bụi quá cao! Kiểm tra ngay!");
+      Blynk.logEvent("high_dust_warning", "Nồng độ bụi quá cao! Kiểm tra ngay!");
       alertSent = true;
       Serial.println("Đã gửi cảnh báo Blynk!");
     }
