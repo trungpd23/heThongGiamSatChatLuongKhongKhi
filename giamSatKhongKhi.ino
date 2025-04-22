@@ -9,35 +9,40 @@
 #include <WiFiClient.h>
 #include <BlynkSimpleEsp32.h>
 
-// Thông tin WiFi
+// WiFi
 #define WIFI_SSID "lab"
 #define WIFI_PASS "12345678"
 
-// Cấu hình cảm biến
+// Cảm biến & thiết bị
 #define DHT_PIN 26
 #define DHT_TYPE DHT11
 #define LED_PIN 5
 #define ANALOG_PIN 34
 #define BUZZER_PIN 25
 
-// Chân ảo Blynk
+// Ngưỡng cảnh báo
+#define DUST_THRESHOLD 55
+#define TEMP_THRESHOLD 38
+#define HUMI_THRESHOLD 85
+
+// Blynk chân ảo
 #define VIRTUAL_TEMP V0
 #define VIRTUAL_HUMI V1
 #define VIRTUAL_DUST V2
-#define VIRTUAL_ALERT V4
+#define VIRTUAL_ALERT V3
 
-// Khởi tạo thiết bị
+// Khởi tạo đối tượng
 DHT dht(DHT_PIN, DHT_TYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// Biến kiểm soát
-bool alertSent = false;  //Biến trạng thái gửi cảnh báo
-bool alertEnabled = true; //Biến trạng thái bật/tắt cảnh báo
+bool alertSentDust = false;
+bool alertSentTemp = false;
+bool alertSentHumi = false;
+bool alertEnabled = true;
 unsigned long previousMillis = 0;
 const long interval = 2000;
 
 void connectWiFiBlynk() {
-  // Kết nối Wifi
   Serial.print("Đang kết nối WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -54,8 +59,6 @@ void connectWiFiBlynk() {
     return;
   }
   Serial.println("\nWiFi đã kết nối!");
-  
-  // Kết nối Blynk
   Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PASS);
   if (!Blynk.connect()) {
     Serial.println("Kết nối Blynk thất bại!");
@@ -74,128 +77,151 @@ float readDustDensity() {
   delayMicroseconds(40);
   digitalWrite(LED_PIN, HIGH);
   delayMicroseconds(9680);
-  
+
   float voltage = analogValue * (3.3 / 4095.0);
   float dustDensity = (voltage - 0.1) / 0.005;
   return max(dustDensity, (float)0);
 }
 
-void displayLCD(float temp, float humi, float dust, bool warning = false) {
-  lcd.clear();
-  if (warning) {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("CANH BAO: BUI");
-    lcd.setCursor(0, 1);
-    lcd.print("D:");
-    lcd.print(dust, 1);
-    lcd.print(" ug/m3 ");
+void displayLCD(float temp, float humi, float dust) {
+  bool showDust = dust > DUST_THRESHOLD;
+  bool showTemp = temp > TEMP_THRESHOLD;
+  bool showHumi = humi > HUMI_THRESHOLD;
+
+  if (showDust || showTemp || showHumi) {
+    if (showDust) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("CANH BAO: BUI!");
+      lcd.setCursor(0, 1);
+      lcd.print("D:");
+      lcd.print(dust, 1);
+      lcd.print(" ug/m3");
+      delay(2000);
+    }
+    if (showTemp) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("CANH BAO: NHIET!");
+      lcd.setCursor(0, 1);
+      lcd.print("T:");
+      lcd.print(temp, 1);
+      lcd.print(" C");
+      delay(2000);
+    }
+    if (showHumi) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("CANH BAO: DO AM");
+      lcd.setCursor(0, 1);
+      lcd.print("H:");
+      lcd.print(humi, 1);
+      lcd.print(" %");
+      delay(2000);
+    }
   } else {
+    lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("T:");
     lcd.print(temp, 1);
     lcd.print("C H:");
     lcd.print(humi, 1);
     lcd.print("%");
-    
     lcd.setCursor(0, 1);
     lcd.print("D:");
     lcd.print(dust, 1);
-    lcd.print(" ug/m3 ");
+    lcd.print(" ug/m3");
   }
 }
 
-void checkAlert(float dustDensity) {
+void checkAlerts(float temp, float humi, float dust) {
   static unsigned long lastAlertTime = 0;
-  const unsigned long alertInterval = 30000; // 30 giây
-  
-  if (dustDensity > 55 && alertEnabled) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(1000);
-    digitalWrite(BUZZER_PIN, LOW);
-    
-    if (!alertSent || millis() - lastAlertTime > alertInterval) {
-      Blynk.logEvent("high_dust_warning", "Nồng độ bụi quá cao! Kiểm tra ngay!");
-      alertSent = true;
-      lastAlertTime = millis();
-      Serial.println("Đã gửi cảnh báo Blynk!");
-    }
-  } else {
-    alertSent = false;
+  const unsigned long alertInterval = 30000;
+
+  if (dust > DUST_THRESHOLD && alertEnabled && (!alertSentDust || millis() - lastAlertTime > alertInterval)) {
+    Blynk.logEvent("high_dust_warning", "Nồng độ bụi quá cao!");
+    tone(BUZZER_PIN, 1000, 500);
+    alertSentDust = true;
+    lastAlertTime = millis();
+    Serial.println("Cảnh báo bụi!");
+  } else if (dust <= DUST_THRESHOLD) {
+    alertSentDust = false;
+  }
+
+  if (temp > TEMP_THRESHOLD && alertEnabled && (!alertSentTemp || millis() - lastAlertTime > alertInterval)) {
+    Blynk.logEvent("high_temp_warning", "Nhiệt độ quá cao!");
+    tone(BUZZER_PIN, 1200, 500);
+    alertSentTemp = true;
+    lastAlertTime = millis();
+    Serial.println("Cảnh báo nhiệt độ!");
+  } else if (temp <= TEMP_THRESHOLD) {
+    alertSentTemp = false;
+  }
+
+  if (humi > HUMI_THRESHOLD && alertEnabled && (!alertSentHumi || millis() - lastAlertTime > alertInterval)) {
+    Blynk.logEvent("high_humi_warning", "Độ ẩm quá cao!");
+    tone(BUZZER_PIN, 1400, 500);
+    alertSentHumi = true;
+    lastAlertTime = millis();
+    Serial.println("Cảnh báo độ ẩm!");
+  } else if (humi <= HUMI_THRESHOLD) {
+    alertSentHumi = false;
   }
 }
 
 BLYNK_WRITE(VIRTUAL_ALERT) {
   alertEnabled = param.asInt();
-  Serial.print("Chế độ cảnh báo: ");
-  Serial.println(alertEnabled ? "Bật" : "Tắt");
-  
+  Serial.print("Cảnh báo: ");
+  Serial.println(alertEnabled ? "BẬT" : "TẮT");
+
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Canh bao:");
   lcd.setCursor(0, 1);
-  lcd.print(alertEnabled ? "BAT " : "TAT ");
+  lcd.print(alertEnabled ? "BAT" : "TAT");
   delay(2000);
   lcd.clear();
 }
 
 void setup() {
   Serial.begin(115200);
-  
-  // Khởi tạo cảm biến
   dht.begin();
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  
-  // Khởi động LCD
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
   lcd.print("Khoi dong...");
   delay(2000);
   lcd.clear();
-  
-  // Kết nối mạng và Blynk
   connectWiFiBlynk();
 }
 
 void loop() {
   Blynk.run();
-  
+
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
-    
-    // Đọc cảm biến
-    float humidity = dht.readHumidity();
-    float temperature = dht.readTemperature();
-    float dustDensity = readDustDensity();
-    
-    if (!isnan(humidity) && !isnan(temperature)) {
-      // Gửi dữ liệu lên Blynk
-      Blynk.virtualWrite(VIRTUAL_TEMP, temperature);
-      Blynk.virtualWrite(VIRTUAL_HUMI, humidity);
-      Blynk.virtualWrite(VIRTUAL_DUST, dustDensity);
-      
-      // Kiểm tra cảnh báo
-      checkAlert(dustDensity);
-      
-      // Hiển thị LCD
-      displayLCD(temperature, humidity, dustDensity, dustDensity > 55);
-      
-      // In ra Serial Monitor
-      Serial.print("Nhiệt độ: ");
-      Serial.print(temperature, 1);
-      Serial.print("°C | Độ ẩm: ");
-      Serial.print(humidity, 1);
-      Serial.print("% | Bụi: ");
-      Serial.print(dustDensity, 1);
-      Serial.println(" µg/m³");
+
+    float humi = dht.readHumidity();
+    float temp = dht.readTemperature();
+    float dust = readDustDensity();
+
+    if (!isnan(humi) && !isnan(temp)) {
+      Blynk.virtualWrite(VIRTUAL_TEMP, temp);
+      Blynk.virtualWrite(VIRTUAL_HUMI, humi);
+      Blynk.virtualWrite(VIRTUAL_DUST, dust);
+
+      checkAlerts(temp, humi, dust);
+      displayLCD(temp, humi, dust);
+
+      Serial.printf("Nhiet do: %.1f°C | Do am: %.1f%% | Bui: %.1f ug/m3\n", temp, humi, dust);
     } else {
-      Serial.println("Lỗi đọc DHT11!");
       lcd.clear();
       lcd.print("Loi cam bien!");
+      Serial.println("Lỗi đọc DHT11!");
     }
   }
 }
